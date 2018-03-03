@@ -12,14 +12,16 @@ type Connection struct {
 	Channel *phochan.Channel
 }
 
-var firebusHost string
-
 func main() {
-	flag.StringVar(&firebusHost, "host", "0.0.0.0:4000", "FireBus address. Default: 0.0.0.0:4000")
-	serverAddress := "ws://" + firebusHost + "/socket/websocket?token=undefined&vsn=2.0.0"
-	mfunc := func(message string) { fmt.Println(message) }
+	firebusHost := flag.String("host", "0.0.0.0:4000", "FireBus address. Default: 0.0.0.0:4000")
+	countClients := flag.Int("count", 1, "Count clients must be integer > 0. Default: 1")
+
+	flag.Parse()
+
+	serverAddress := "ws://" + *firebusHost + "/socket/websocket?token=undefined&vsn=2.0.0"
+	mfunc := func(message []byte) { fmt.Println(string(message)) }
 	var a []Connection
-	for i := 0; i < 100; i++ {
+	for i := 0; i < *countClients; i++ {
 		socket := phochan.NewSocket(serverAddress)
 		channel := socket.Channel("test_room:lobby", mfunc)
 		a = append(a, Connection{Socket: socket, Channel: channel})
