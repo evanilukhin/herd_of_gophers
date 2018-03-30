@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/evanilukhin/phochan"
 	"time"
 )
@@ -19,6 +20,7 @@ type Connection struct {
 type IncomingPayload struct {
 	Item      int    `json:"item"`
 	Firebus   string `json:"firebus"`
+	UUID      string `json:"uuid"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -26,17 +28,39 @@ type IncomingPayload struct {
 type OutcomingPayload struct {
 	Item          int    `json:"item"`
 	Firebus       string `json:"firebus"`
+	UUID          string `json:"uuid"`
 	HerdOfGophers string `json:"herd_of_gophers"`
 	CreatedAt     string `json:"created_at"`
 }
 
+var topic = "herd_of_gophers"
+var collector = make(chan []byte)
+
 func main() {
 	firebusHost := flag.String("host", "0.0.0.0:4000", "FireBus address. Default: 0.0.0.0:4000")
 	countClients := flag.Int("count", 1, "Count clients must be integer > 0. Default: 1")
+	kafkaBrokerHost := flag.String("kafka", "0.0.0.0:9092", "Kafka broker address. Default: 0.0.0.0:9092")
 
 	flag.Parse()
 
 	serverAddress := "ws://" + *firebusHost + "/socket/websocket?token=undefined&vsn=2.0.0"
+
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": *kafkaBrokerHost})
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for e := range p.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
+				}
+			}
+		}
+	}()
+
 	var a []Connection
 	for i := 0; i < *countClients; i++ {
 		socket := phochan.NewSocket(serverAddress)
@@ -48,6 +72,15 @@ func main() {
 		connection.Channel.Join()
 		connection.Channel.Start()
 	}
+
+	go func() {
+		for word := range collector {
+			p.Produce(&kafka.Message{
+				TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+				Value:          word,
+			}, nil)
+		}
+	}()
 	time.Sleep(time.Minute * 60)
 }
 
@@ -57,11 +90,11 @@ func transformAndPrint(message phochan.PhoenixMessage) {
 	json.Unmarshal(message.Payload, &payload)
 	outcomingPayload := OutcomingPayload{
 		Item:          payload.Item,
+		UUID:          payload.UUID,
 		Firebus:       payload.Firebus,
 		CreatedAt:     payload.CreatedAt,
 		HerdOfGophers: t.Format("15:04:05.999999"),
 	}
 	marshalledOutcomingPayload, _ := json.Marshal(outcomingPayload)
-
-	fmt.Printf("%v\n", string(marshalledOutcomingPayload))
+	collector <- marshalledOutcomingPayload
 }
